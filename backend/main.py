@@ -42,7 +42,7 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="HTM - Step File Analyzer",
+    title="HMT - Fast-Quote",
     description="Advanced STEP File Analysis and Machining Time Estimation",
     version="1.0.0"
 )
@@ -61,14 +61,14 @@ MATERIAL_PARAMS = {
     "aluminum": {
         "density": 2.7,  # g/cm³
         "base_removal_rate": 25000,  # cubic mm per minute
-        "complexity_factor": 0.8,    # multiplier for complex geometries
-        "setup_time": 180,          # minutes (3 hours setup)
-        "programming_time": 120,    # minutes (2 hours programming)
+        "complexity_factor": 0.5,    # multiplier for complex geometries (reduced from 0.8)
+        "setup_time": 60,          # minutes (reduced from 180)
+        "programming_time": 60,    # minutes (reduced from 120)
         "tool_change_time": 5,      # minutes per tool change
         "finishing_factor": 0.3,    # multiplier for finishing operations
-        "target_machining_time": 140,  # target machining time in minutes
+        "target_machining_time": 60,  # target machining time in minutes (reduced from 140)
         "stock_margin": 5,  # mm to add to each dimension for raw stock
-        "calibration_data": []  # List to store calibration data
+        "calibration_data": {}  # Dictionary to store calibration data by filename
     }
 }
 
@@ -94,8 +94,21 @@ def load_material_params():
         file_path = os.path.join(os.path.dirname(__file__), 'data', 'material_params.json')
         if os.path.exists(file_path):
             with open(file_path, 'r') as f:
+                loaded_params = json.load(f)
+                # Ensure calibration_data is a dictionary for each material
+                for material in loaded_params:
+                    if "calibration_data" not in loaded_params[material]:
+                        loaded_params[material]["calibration_data"] = {}
+                    elif isinstance(loaded_params[material]["calibration_data"], list):
+                        # Convert old list format to dictionary format
+                        calibration_dict = {}
+                        for entry in loaded_params[material]["calibration_data"]:
+                            if "filename" in entry:
+                                calibration_dict[entry["filename"]] = entry
+                        loaded_params[material]["calibration_data"] = calibration_dict
+                
                 global MATERIAL_PARAMS
-                MATERIAL_PARAMS = json.load(f)
+                MATERIAL_PARAMS = loaded_params
             logger.info("Material parameters loaded successfully")
     except Exception as e:
         logger.error(f"Error loading material parameters: {e}")
@@ -136,85 +149,122 @@ def calculate_material_removal(part_volume, raw_stock_volume):
     }
 
 def calculate_similarity_score(part1, part2):
-    """Calculate similarity score between two parts based on volume and complexity."""
+    """Calculate similarity score between two parts based on volume, complexity, and material removal."""
+    # Volume ratio (0-1)
     volume_ratio = min(part1["volume_mm3"], part2["volume_mm3"]) / max(part1["volume_mm3"], part2["volume_mm3"])
-    complexity_ratio = min(part1["complexity_score"], part2["complexity_score"]) / max(part1["complexity_score"], part2["complexity_score"])
     
-    # Weight volume similarity more heavily than complexity
-    return (volume_ratio * 0.7) + (complexity_ratio * 0.3)
-
-def estimate_time_from_calibration(current_part, calibration_data, time_type):
-    """Estimate time based on weighted average of similar calibrated parts."""
-    if not calibration_data:
-        return None
-        
-    total_weight = 0
-    weighted_time = 0
+    # Complexity similarity (0-1)
+    complexity_diff = abs(part1["complexity_score"] - part2["complexity_score"]) / 100
+    complexity_similarity = 1 - complexity_diff
     
-    # Calculate similarity scores and weights
-    for calibrated_part in calibration_data:
-        similarity = calculate_similarity_score(
-            {"volume_mm3": current_part["volume"], "complexity_score": current_part["complexity"]},
-            {"volume_mm3": calibrated_part["volume_mm3"], "complexity_score": calibrated_part["complexity_score"]}
-        )
-        
-        # Use exponential weighting to give more importance to similar parts
-        weight = math.exp(similarity * 2)  # exp(2) ≈ 7.4 for perfect similarity
-        total_weight += weight
-        weighted_time += weight * calibrated_part[time_type]
+    # Material removal similarity (0-1)
+    removal_ratio1 = part1["material_removal"]["removal_percentage"] / 100
+    removal_ratio2 = part2["material_removal"]["removal_percentage"] / 100
+    removal_similarity = 1 - abs(removal_ratio1 - removal_ratio2)
     
-    if total_weight > 0:
-        return weighted_time / total_weight
-    return None
-
-def calculate_machining_time(volume_mm3, complexity_score, material):
-    """Calculate estimated machining time based on calibration data and complexity."""
-    params = MATERIAL_PARAMS[material]
-    calibration_data = params.get("calibration_data", [])
-    
-    current_part = {
-        "volume": volume_mm3,
-        "complexity": complexity_score
+    # Weight the factors (adjust weights as needed)
+    weights = {
+        "volume": 0.4,
+        "complexity": 0.3,
+        "removal": 0.3
     }
     
-    # Try to estimate times from calibration data
-    setup_time = estimate_time_from_calibration(current_part, calibration_data, "setup_time")
-    programming_time = estimate_time_from_calibration(current_part, calibration_data, "programming_time")
-    machining_time = estimate_time_from_calibration(current_part, calibration_data, "machining_time")
+    similarity = (
+        volume_ratio * weights["volume"] +
+        complexity_similarity * weights["complexity"] +
+        removal_similarity * weights["removal"]
+    )
     
-    if machining_time is None:
-        # Fallback to default calculation if no calibration data
-        base_machining_time = params["target_machining_time"]
+    return similarity
+
+def calculate_machining_time(volume_mm3, complexity_score, material, material_removal):
+    """Calculate estimated machining time based on calibration data and complexity."""
+    params = MATERIAL_PARAMS[material]
+    calibration_data = params.get("calibration_data", {})
+    
+    current_part = {
+        "volume_mm3": volume_mm3,
+        "complexity_score": complexity_score,
+        "material_removal": material_removal
+    }
+    
+    # Find similar parts
+    similar_parts = []
+    for part_name, calibrated_part in calibration_data.items():
+        similarity = calculate_similarity_score(current_part, calibrated_part)
+        if similarity > 0.7:  # Only use parts with >70% similarity
+            similar_parts.append({
+                "filename": part_name,
+                "similarity": similarity,
+                "setup_time": calibrated_part["setup_time"],
+                "programming_time": calibrated_part["programming_time"],
+                "machining_time": calibrated_part["machining_time"]
+            })
+    
+    # Sort by similarity
+    similar_parts.sort(key=lambda x: x["similarity"], reverse=True)
+    
+    # Calculate base times
+    if similar_parts:
+        # Calculate weighted average times
+        total_weight = sum(part["similarity"] for part in similar_parts)
+        setup_time = sum(part["similarity"] * part["setup_time"] for part in similar_parts) / total_weight
+        programming_time = sum(part["similarity"] * part["programming_time"] for part in similar_parts) / total_weight
+        machining_time = sum(part["similarity"] * part["machining_time"] for part in similar_parts) / total_weight
+        
+        # Calculate confidence score based on similarities
+        best_similarity = similar_parts[0]["similarity"]
+        confidence_score = min(100, best_similarity * 100)
+    else:
+        # Fallback to basic calculation if no similar parts found
+        base_time = params["target_machining_time"]
         complexity_multiplier = 1 + ((complexity_score / 100) * params["complexity_factor"] - 0.5)
-        machining_time = base_machining_time * complexity_multiplier
-    
-    if setup_time is None:
+        removal_multiplier = 1 + (material_removal["removal_percentage"] / 200)
+        
         setup_time = params["setup_time"]
-    
-    if programming_time is None:
         programming_time = params["programming_time"]
+        machining_time = base_time * complexity_multiplier * removal_multiplier
+        confidence_score = 0
     
-    # Calculate confidence score based on number and similarity of calibration points
-    confidence_score = 0
-    if calibration_data:
-        best_similarity = max(
-            calculate_similarity_score(
-                {"volume_mm3": current_part["volume"], "complexity_score": current_part["complexity"]},
-                {"volume_mm3": cp["volume_mm3"], "complexity_score": cp["complexity_score"]}
-            )
-            for cp in calibration_data
-        )
-        confidence_score = min(100, (len(calibration_data) * 20 * best_similarity))
+    # Calculate batch quantities with efficiency improvements
+    batch_quantities = [1, 5, 10, 20, 50]
+    batch_estimates = {}
     
-    total_time = setup_time + programming_time + machining_time
+    for quantity in batch_quantities:
+        # Setup time is constant per batch
+        batch_setup = setup_time
+        
+        # Programming time is constant per batch
+        batch_programming = programming_time
+        
+        # Machining time improves with quantity due to optimizations and learning curve
+        # Using a learning curve factor: efficiency improves as quantity increases
+        learning_factor = 1 - (math.log(quantity, 50) * 0.15)  # Max 15% improvement at 50 pieces
+        batch_machining_per_part = machining_time * learning_factor
+        total_machining = batch_machining_per_part * quantity
+        
+        # Calculate totals
+        total_time = batch_setup + batch_programming + total_machining
+        time_per_part = total_time / quantity
+        
+        batch_estimates[str(quantity)] = {
+            "total_time": round(total_time, 2),
+            "time_per_part": round(time_per_part, 2),
+            "setup_time": round(batch_setup, 2),
+            "programming_time": round(batch_programming, 2),
+            "machining_time_per_part": round(batch_machining_per_part, 2),
+            "total_machining_time": round(total_machining, 2)
+        }
     
     return {
-        "total_time": round(total_time, 2),
+        "total_time": round(setup_time + programming_time + machining_time, 2),
         "setup_time": round(setup_time, 2),
         "programming_time": round(programming_time, 2),
         "machining_time": round(machining_time, 2),
         "confidence_score": round(confidence_score, 2),
-        "calibration_points_used": len(calibration_data)
+        "calibration_points_used": len(similar_parts),
+        "similar_parts": similar_parts[:3],  # Return top 3 similar parts
+        "batch_estimates": batch_estimates
     }
 
 def calculate_face_area(vertices):
@@ -456,117 +506,125 @@ def calculate_part_volume(file_path):
     logger.info(f"Calculated part volume from {valid_face_count} triangles: {total_volume:.2f} mm³")
     return total_volume if total_volume > 0 else None
 
-def analyze_step_file(file_path, material):
-    """Analyze a STEP file and return geometric properties."""
+async def analyze_step_file(file: UploadFile, material: str):
+    """
+    Analyze a STEP file and return its geometric properties.
+    """
     try:
-        cartesian_points = extract_cartesian_points(file_path)
-        
-        if not cartesian_points:
-            logger.error("No cartesian points found in STEP file")
-            raise ValueError("No geometric data found in STEP file")
-        
-        # Calculate bounding box
-        bounding_box = calculate_bounding_box(cartesian_points)
-        
-        # Count entities
-        with open(file_path, 'r') as f:
-            content = f.read()
+        if material not in MATERIAL_PARAMS:
+            raise HTTPException(status_code=400, detail=f"Unsupported material: {material}")
             
-        entity_counts = {
-            "CARTESIAN_POINT": len(cartesian_points),
-            "ADVANCED_FACE": len(re.findall(r"ADVANCED_FACE", content)),
-            "VERTEX_POINT": len(re.findall(r"VERTEX_POINT", content)),
-            "EDGE_CURVE": len(re.findall(r"EDGE_CURVE", content))
-        }
-        
-        logger.info(f"Entity counts: {entity_counts}")
-        
-        # Calculate actual part volume with improved method
-        part_volume = calculate_part_volume(file_path)
-        volume_calculation_method = "exact"
-        
-        if part_volume is None or part_volume <= 0:
-            # Fallback to bounding box volume if actual volume calculation fails
-            logger.warning("Failed to calculate exact volume, falling back to bounding box approximation")
-            bounding_box_volume = (
-                bounding_box["dimensions"][0] * 
-                bounding_box["dimensions"][1] * 
-                bounding_box["dimensions"][2]
-            )
-            # Apply a typical solid part fill factor based on complexity
-            face_count = entity_counts.get("ADVANCED_FACE", 0)
-            if face_count > 0:
-                # More faces typically means more complex geometry and less filled volume
-                fill_factor = max(0.2, min(0.8, 1.0 - (face_count / 1000)))
-            else:
-                fill_factor = 0.6  # Default fill factor
-            
-            part_volume = bounding_box_volume * fill_factor
-            volume_calculation_method = "bounding_box"
-            logger.info(f"Estimated part volume using bounding box with {fill_factor:.2f} fill factor: {part_volume:.2f} mm³")
-        
-        # Calculate raw stock info using bounding box
-        raw_stock = calculate_raw_stock(bounding_box, material)
-        
-        # Ensure raw stock volume is always larger than part volume
-        if raw_stock["volume_mm3"] <= part_volume:
-            # Add additional margin to ensure raw stock is larger
-            scale_factor = (part_volume / raw_stock["volume_mm3"]) * 1.1  # Add 10% extra
-            raw_stock["dimensions"] = [d * scale_factor**(1/3) for d in raw_stock["dimensions"]]
-            raw_stock["volume_mm3"] = raw_stock["dimensions"][0] * raw_stock["dimensions"][1] * raw_stock["dimensions"][2]
-            
-            # Convert density from g/cm³ to kg/mm³
-            density_kg_per_mm3 = MATERIAL_PARAMS[material]["density"] * 1e-6
-            raw_stock["weight_kg"] = raw_stock["volume_mm3"] * density_kg_per_mm3
-            
-            logger.info(f"Adjusted raw stock dimensions to ensure larger than part volume. Scale factor: {scale_factor:.2f}")
-        
-        # Calculate material removal
-        material_removal = calculate_material_removal(part_volume, raw_stock["volume_mm3"])
-        
-        # Calculate part weight using density
-        # Convert density from g/cm³ to kg/mm³
-        density_kg_per_mm3 = MATERIAL_PARAMS[material]["density"] * 1e-6
-        part_weight_kg = part_volume * density_kg_per_mm3
-        
-        # Calculate complexity score
-        total_entities = sum(entity_counts.values())
-        unique_entity_types = len([count for count in entity_counts.values() if count > 0])
-        complexity_score = min(100, (total_entities / 100) + (unique_entity_types * 5))
-        
-        # Calculate machining time with improved calibration
-        time_estimate = calculate_machining_time(part_volume, complexity_score, material)
-        
-        return {
-            "basic_info": {
-                "volume_mm3": part_volume,
-                "volume_calculation_method": volume_calculation_method,
-                "weight_kg": part_weight_kg,
-                "bounding_box_mm": bounding_box
-            },
-            "raw_stock": raw_stock,
-            "material_removal": material_removal,
-            "complexity": {
-                "face_count": entity_counts.get("ADVANCED_FACE", 0),
-                "vertex_count": entity_counts.get("VERTEX_POINT", 0),
-                "edge_count": entity_counts.get("EDGE_CURVE", 0),
-                "total_entities": total_entities,
-                "unique_entity_types": unique_entity_types
-            },
-            "machining_estimate": {
-                "complexity_score": round(complexity_score, 2),
-                "estimated_machine_time_minutes": time_estimate["total_time"],
-                "setup_time_minutes": time_estimate["setup_time"],
-                "programming_time_minutes": time_estimate["programming_time"],
-                "machining_time_minutes": time_estimate["machining_time"],
-                "confidence_score": time_estimate["confidence_score"],
-                "calibration_points_used": time_estimate["calibration_points_used"],
-                "complexity_level": get_complexity_level(complexity_score)
-            }
-        }
+        # Create a temporary file to save the uploaded content
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.step') as temp_file:
+            try:
+                # Save uploaded file
+                content = await file.read()
+                temp_file.write(content)
+                temp_file.flush()
+                
+                # Reset file position for future reads
+                await file.seek(0)
+                
+                # Load the STEP file using CadQuery
+                model = cq.importers.importStep(str(temp_file.name))
+                shape = model.val()
+                
+                # Get basic measurements using CadQuery
+                results = analyze_step_with_cadquery(str(temp_file.name))
+                
+                # Count entities using CadQuery's high-level API
+                entity_counts = {
+                    "face_count": len(list(shape.faces())),
+                    "vertex_count": len(list(shape.vertices())),
+                    "edge_count": len(list(shape.edges()))
+                }
+                entity_counts["total_entities"] = sum(entity_counts.values())
+                
+                # Calculate part weight using density
+                density_kg_per_mm3 = MATERIAL_PARAMS[material]["density"] * 1e-6  # Convert g/cm³ to kg/mm³
+                part_weight_kg = results["volume"] * density_kg_per_mm3
+                
+                # Calculate raw stock dimensions (add margin)
+                margin = MATERIAL_PARAMS[material]["stock_margin"]
+                raw_dimensions = [d + (2 * margin) for d in results["dimensions"]]
+                raw_volume = raw_dimensions[0] * raw_dimensions[1] * raw_dimensions[2]
+                raw_weight = raw_volume * density_kg_per_mm3
+                
+                # Calculate material removal
+                material_removal = {
+                    "removed_volume_mm3": raw_volume - results["volume"],
+                    "removal_percentage": ((raw_volume - results["volume"]) / raw_volume) * 100
+                }
+                
+                # Calculate complexity score based on multiple factors
+                # 1. Surface area to volume ratio (normalized)
+                sa_to_vol_ratio = results["surface_area"] / results["volume"]
+                sa_to_vol_score = min(50, (sa_to_vol_ratio * 1000))  # Scale and cap at 50
+                
+                # 2. Entity count score (normalized)
+                max_expected_entities = 10000  # Adjust based on typical part complexity
+                entity_score = min(50, (entity_counts["total_entities"] / max_expected_entities) * 50)
+                
+                # Combine scores
+                complexity_score = sa_to_vol_score + entity_score
+                
+                # Calculate machining time estimate
+                time_estimate = calculate_machining_time(
+                    volume_mm3=results["volume"],
+                    complexity_score=complexity_score,
+                    material=material,
+                    material_removal=material_removal
+                )
+                
+                # Format the response
+                response = {
+                    "basic_info": {
+                        "volume_mm3": results["volume"],
+                        "weight_kg": part_weight_kg,
+                        "bounding_box_mm": {
+                            "dimensions": results["dimensions"],
+                            "min_corner": results["bounding_box"]["min"],
+                            "max_corner": results["bounding_box"]["max"]
+                        }
+                    },
+                    "raw_stock": {
+                        "dimensions": raw_dimensions,
+                        "volume_mm3": raw_volume,
+                        "weight_kg": raw_weight
+                    },
+                    "material_removal": material_removal,
+                    "complexity": {
+                        "surface_area_mm2": results["surface_area"],
+                        "face_count": entity_counts["face_count"],
+                        "vertex_count": entity_counts["vertex_count"],
+                        "edge_count": entity_counts["edge_count"],
+                        "total_entities": entity_counts["total_entities"],
+                        "surface_area_to_volume_ratio": sa_to_vol_ratio
+                    },
+                    "machining_estimate": {
+                        "complexity_score": round(complexity_score, 2),
+                        "complexity_level": get_complexity_level(complexity_score),
+                        "estimated_machine_time_minutes": time_estimate["total_time"],
+                        "setup_time_minutes": time_estimate["setup_time"],
+                        "programming_time_minutes": time_estimate["programming_time"],
+                        "machining_time_minutes": time_estimate["machining_time"],
+                        "confidence_score": time_estimate["confidence_score"],
+                        "calibration_points_used": time_estimate["calibration_points_used"],
+                        "similar_parts": time_estimate["similar_parts"]
+                    }
+                }
+                
+                return response
+                
+            finally:
+                try:
+                    os.unlink(temp_file.name)
+                except Exception as e:
+                    logger.error(f"Error cleaning up temporary file: {e}")
+                    
     except Exception as e:
-        logger.error(f"Error analyzing STEP file: {str(e)}", exc_info=True)
-        raise ValueError(f"Error analyzing STEP file: {str(e)}")
+        logger.error(f"Error processing STEP file: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/calibrate")
 async def calibrate_timing(
@@ -588,53 +646,64 @@ async def calibrate_timing(
             raise HTTPException(status_code=400, detail="Time values cannot be negative")
         
         # Analyze the file first
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.step') as temp_file:
-            try:
-                content = await file.read()
-                temp_file.write(content)
-                temp_file.flush()
-                
-                analysis = analyze_step_file(temp_file.name, material)
-                
-                # Add calibration data
-                calibration_entry = {
-                    "filename": file.filename,
-                    "volume_mm3": analysis["basic_info"]["volume_mm3"],
-                    "complexity_score": analysis["machining_estimate"]["complexity_score"],
-                    "setup_time": setup_time,
-                    "programming_time": programming_time,
-                    "machining_time": machining_time,
-                    "timestamp": datetime.datetime.now().isoformat()
-                }
-                
-                # Initialize calibration_data if it doesn't exist
-                if "calibration_data" not in MATERIAL_PARAMS[material]:
-                    MATERIAL_PARAMS[material]["calibration_data"] = []
-                
-                MATERIAL_PARAMS[material]["calibration_data"].append(calibration_entry)
-                MATERIAL_PARAMS[material]["setup_time"] = setup_time
-                MATERIAL_PARAMS[material]["programming_time"] = programming_time
-                
-                # Save updated parameters
-                save_material_params()
-                
-                logger.info(f"Calibration data added successfully for {file.filename}")
-                return {"message": "Calibration data added successfully"}
-                
-            finally:
-                try:
-                    os.unlink(temp_file.name)
-                except Exception as e:
-                    logger.error(f"Error cleaning up temporary file: {e}")
-                
+        analysis = await analyze_step_file_endpoint(file=file, material=material)
+        
+        # Add calibration data
+        calibration_entry = {
+            "filename": file.filename,
+            "volume_mm3": analysis["basic_info"]["volume_mm3"],
+            "complexity_score": analysis["machining_estimate"]["complexity_score"],
+            "setup_time": setup_time,
+            "programming_time": programming_time,
+            "machining_time": machining_time,
+            "material_removal": analysis["material_removal"],
+            "timestamp": datetime.datetime.now().isoformat(),
+            "is_calibrated": True
+        }
+        
+        # Initialize calibration_data if it doesn't exist
+        if "calibration_data" not in MATERIAL_PARAMS[material]:
+            MATERIAL_PARAMS[material]["calibration_data"] = {}
+        
+        # Store calibration by filename, overwriting any previous calibration for this file
+        MATERIAL_PARAMS[material]["calibration_data"][file.filename] = calibration_entry
+        
+        # Save updated parameters
+        save_material_params()
+        
+        logger.info(f"Calibration data added successfully for {file.filename}")
+        return {"message": "Calibration data added successfully"}
+        
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error during calibration: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error during calibration: {str(e)}")
 
+@app.get("/history")
+async def get_analysis_history(material: str):
+    """Get history of analyzed parts with calibration data."""
+    if material not in MATERIAL_PARAMS:
+        raise HTTPException(status_code=400, detail=f"Unsupported material: {material}")
+        
+    try:
+        # Get calibration data
+        calibration_data = MATERIAL_PARAMS[material].get("calibration_data", {})
+        
+        # Convert dictionary to list and sort by timestamp
+        history = list(calibration_data.values())
+        history.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+        
+        return {
+            "history": history,
+            "total_entries": len(history)
+        }
+    except Exception as e:
+        logger.error(f"Error retrieving history: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving history: {str(e)}")
+
 @app.post("/analyze")
-async def analyze_step_file(file: UploadFile = File(...), material: str = Form(...)):
+async def analyze_step_file_endpoint(file: UploadFile = File(...), material: str = Form(...)):
     """
     Analyze a STEP file and return its geometric properties.
     """
@@ -676,10 +745,7 @@ async def analyze_step_file(file: UploadFile = File(...), material: str = Form(.
             raw_weight = raw_volume * density_kg_per_mm3
             
             # Calculate material removal
-            material_removal = {
-                "removed_volume_mm3": raw_volume - results["volume"],
-                "removal_percentage": ((raw_volume - results["volume"]) / raw_volume) * 100
-            }
+            material_removal = calculate_material_removal(results["volume"], raw_volume)
             
             # Calculate complexity score based on multiple factors
             # 1. Surface area to volume ratio (normalized)
@@ -694,7 +760,12 @@ async def analyze_step_file(file: UploadFile = File(...), material: str = Form(.
             complexity_score = sa_to_vol_score + entity_score
             
             # Calculate machining time estimate
-            time_estimate = calculate_machining_time(results["volume"], complexity_score, material)
+            time_estimate = calculate_machining_time(
+                volume_mm3=results["volume"],
+                complexity_score=complexity_score,
+                material=material,
+                material_removal=material_removal
+            )
             
             # Format the response
             response = {
@@ -729,7 +800,9 @@ async def analyze_step_file(file: UploadFile = File(...), material: str = Form(.
                     "programming_time_minutes": time_estimate["programming_time"],
                     "machining_time_minutes": time_estimate["machining_time"],
                     "confidence_score": time_estimate["confidence_score"],
-                    "calibration_points_used": time_estimate["calibration_points_used"]
+                    "calibration_points_used": time_estimate["calibration_points_used"],
+                    "similar_parts": time_estimate.get("similar_parts", []),
+                    "batch_estimates": time_estimate.get("batch_estimates", {})
                 }
             }
             
@@ -854,7 +927,9 @@ async def get_geometry(file: UploadFile = File(...)):
         # Save uploaded file temporarily
         temp_path = "temp_step_file.step"
         with open(temp_path, "wb") as f:
-            f.write(await file.read())
+            content = await file.read()
+            f.write(content)
+            await file.seek(0)  # Reset file position
         
         try:
             # Load the STEP file using CadQuery
@@ -869,7 +944,6 @@ async def get_geometry(file: UploadFile = File(...)):
             vertices = []
             faces = []
             vertex_map = {}
-            current_vertex_index = 0
             
             # First collect all vertices from the shape
             logger.info("Processing vertices from shape...")

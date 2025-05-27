@@ -1,4 +1,4 @@
-# HTM - Step File Analyzer
+# HMT - Fast-Quote
 
 A powerful STEP file analysis tool for machining time estimation and part analysis.
 
@@ -12,6 +12,7 @@ A powerful STEP file analysis tool for machining time estimation and part analys
 - Setup and programming time estimation
 - Material parameter management
 - Persistent calibration data storage
+- Batch quantity estimation (1, 5, 10, 20, 50 pieces)
 
 ## Tech Stack
 
@@ -77,6 +78,7 @@ The application will be available at:
    - Material removal calculations
    - Estimated machining times
    - Complexity analysis
+   - Batch quantity estimates
 
 ## Calibration System
 
@@ -88,6 +90,21 @@ The system includes a calibration feature that improves time estimates based on 
    - Programming time
    - Machining time
 3. The system will use this data to improve future estimates
+
+## Changelog
+
+### 2024-02-07
+- Rebranded to "HMT - Fast-Quote" with new logo
+- Added batch quantity estimation feature (1, 5, 10, 20, 50 pieces)
+- Improved time estimation with learning curve factor for batch quantities
+- Enhanced UI with detailed batch analysis table
+- Fixed material removal calculation issues
+- Updated calibration system to handle batch estimates
+
+### Previous Updates
+- Initial calibration system implementation
+- Material parameter management
+- Basic STEP file analysis features
 
 ## License
 

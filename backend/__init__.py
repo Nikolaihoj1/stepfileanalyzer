@@ -1,3 +1,3 @@
 """
-STEP File Analyzer Backend Package
+Backend package for STEP file analyzer
 """ 
