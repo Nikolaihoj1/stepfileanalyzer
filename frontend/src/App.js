@@ -441,7 +441,13 @@ function App() {
           {file && !loading && (
             <Paper elevation={3} sx={{ p: 3, mt: 3 }}>
               <Typography variant="h6" gutterBottom>3D Preview</Typography>
-              <StepViewer file={file} geometryData={geometryData} />
+              {geometryData ? (
+                <StepViewer geometryData={geometryData} />
+              ) : (
+                <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '600px' }}>
+                  <Typography>No geometry data available</Typography>
+                </Box>
+              )}
             </Paper>
           )}
 
