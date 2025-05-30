@@ -333,7 +333,42 @@ function App() {
 
   return (
     <Container maxWidth="lg">
-      <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
+      {/* Banner Image */}
+      <Box 
+        sx={{ 
+          width: '100%',
+          height: '200px',
+          overflow: 'hidden',
+          position: 'relative',
+          mb: 3,
+          borderRadius: '8px',
+          boxShadow: 3
+        }}
+      >
+        <img 
+          src="/banner.jpg" 
+          alt="Machined Parts Banner"
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            objectPosition: 'center'
+          }}
+        />
+      </Box>
+
+      {/* Logo and Title with updated styling */}
+      <Paper 
+        elevation={3} 
+        sx={{ 
+          p: 2, 
+          mb: 3, 
+          display: 'flex', 
+          alignItems: 'center',
+          background: 'rgba(255, 255, 255, 0.9)',
+          backdropFilter: 'blur(10px)'
+        }}
+      >
         <img 
           src="/logo.svg" 
           alt="HMT Fast-Quote Logo" 
@@ -345,7 +380,7 @@ function App() {
         <Typography variant="h4" component="h1">
           HMT - Fast-Quote
         </Typography>
-      </Box>
+      </Paper>
 
       <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
         <Tabs value={tabValue} onChange={handleTabChange}>
@@ -526,6 +561,29 @@ function App() {
           {snackbar.message}
         </Alert>
       </Snackbar>
+
+      {/* Footer */}
+      <Box 
+        component="footer" 
+        sx={{ 
+          mt: 4, 
+          pt: 2, 
+          pb: 2,
+          borderTop: '1px solid',
+          borderColor: 'divider',
+          textAlign: 'center'
+        }}
+      >
+        <Typography variant="body2" color="text.secondary" gutterBottom>
+          Developed by Nikolai Høj Vohnsen
+        </Typography>
+        <Typography variant="body2" color="text.secondary" gutterBottom>
+          © {new Date().getFullYear()} HMT Fast-Quote™. All rights reserved.
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Contact: <a href="mailto:vohnsen@gmail.com" style={{ color: 'inherit' }}>vohnsen@gmail.com</a>
+        </Typography>
+      </Box>
     </Container>
   );
 }
