@@ -1096,7 +1096,9 @@ async def get_geometry(file: UploadFile = File(...)):
 
 def determine_required_axes(shape, faces):
     """
-    Determine the number of axes required for machining based on part geometry.
+    Determine if 3-axis or 5-axis machining is required.
+    Finds the main face (largest) and then checks side faces for holes/pockets.
+    Uses 3-axis if no side holes/pockets, 5-axis if there are any.
     
     Parameters:
     -----------
@@ -1109,73 +1111,63 @@ def determine_required_axes(shape, faces):
     --------
     dict
         Dictionary containing:
-        - estimated_axes: int (3, 4, or 5)
+        - estimated_axes: int (3 or 5)
         - reasons: list of reasons for the axis determination
     """
     reasons = []
     
     try:
-        # Get all face normals
-        face_normals = []
-        unique_directions = set()
+        # 1. Find the main face (largest face)
+        largest_face = None
+        largest_area = 0
+        largest_normal = None
         
-        # Analyze faces from the shape
         for face in shape.faces():
+            area = face.Area()
+            if area > largest_area:
+                largest_area = area
+                largest_face = face
+                largest_normal = face.normalAt()
+        
+        if not largest_face or not largest_normal:
+            return {
+                "estimated_axes": 3,
+                "reasons": ["No faces found, defaulting to 3-axis"]
+            }
+        
+        # 2. Find side faces (faces perpendicular to main face)
+        side_faces = []
+        for face in shape.faces():
+            if face == largest_face:
+                continue
+                
             normal = face.normalAt()
-            face_normals.append(normal)
+            # Calculate dot product to check if perpendicular (should be close to 0)
+            dot_product = abs(normal.x * largest_normal.x + 
+                            normal.y * largest_normal.y + 
+                            normal.z * largest_normal.z)
             
-            # Add normalized direction to unique set (rounded to 3 decimals)
-            direction = tuple(round(x, 3) for x in [normal.x, normal.y, normal.z])
-            unique_directions.add(direction)
+            if dot_product < 0.1:  # Faces are nearly perpendicular
+                side_faces.append(face)
         
-        # Count unique normal directions
-        num_unique_directions = len(unique_directions)
-        
-        # Initialize to 3-axis as default
-        required_axes = 3
-        
-        # Check for features requiring more axes
-        if num_unique_directions > 6:  # More than 6 unique face orientations
-            required_axes = 5
-            reasons.append("Multiple face orientations requiring 5-axis machining")
-        
-        # Check for undercuts
-        has_undercuts = False
-        for normal in face_normals:
-            # Check if face normal is not aligned with primary axes
-            if (abs(abs(normal.x) - 1.0) > 0.1 and 
-                abs(abs(normal.y) - 1.0) > 0.1 and 
-                abs(abs(normal.z) - 1.0) > 0.1):
-                has_undercuts = True
+        # 3. Check for holes/pockets in side faces
+        feature_count = 0
+        for face in side_faces:
+            wires = list(face.innerWires())
+            feature_count += len(wires)
+            if feature_count > 0:  # Stop counting once we find any features
                 break
         
-        if has_undercuts and required_axes < 4:
-            required_axes = 4
-            reasons.append("Undercuts detected requiring 4-axis machining")
+        # 4. Determine required axes
+        if feature_count > 0:
+            required_axes = 5
+            reasons.append(f"5-axis required: Found {feature_count} holes/pockets in side faces")
+        else:
+            required_axes = 3
+            reasons.append("3-axis suitable: No holes/pockets found in side faces")
         
-        # Check for deep pockets or holes
-        for face in shape.faces():
-            try:
-                # Get face bounds
-                face_bb = face.BoundingBox()
-                depth = max(
-                    face_bb.xmax - face_bb.xmin,
-                    face_bb.ymax - face_bb.ymin,
-                    face_bb.zmax - face_bb.zmin
-                )
-                
-                # If depth is significant compared to other dimensions
-                if depth > min(face_bb.xlen, face_bb.ylen, face_bb.zlen) * 3:
-                    if required_axes < 4:
-                        required_axes = 4
-                        reasons.append("Deep features requiring 4-axis machining")
-                    break
-            except:
-                continue
-        
-        # If no specific features are found, keep it at 3-axis
-        if not reasons:
-            reasons.append("Standard 3-axis machining features")
+        # Add analysis details
+        reasons.append(f"Analysis details: Checked {len(side_faces)} side faces")
         
         return {
             "estimated_axes": required_axes,
@@ -1185,7 +1177,7 @@ def determine_required_axes(shape, faces):
     except Exception as e:
         logger.warning(f"Error determining required axes: {str(e)}")
         return {
-            "estimated_axes": 3,  # Default to 3-axis if analysis fails
+            "estimated_axes": 3,
             "reasons": ["Default to 3-axis due to analysis error"]
         }
 
