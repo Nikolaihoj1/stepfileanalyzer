@@ -4,6 +4,15 @@ A powerful STEP file analysis tool for machining time estimation and part analys
 
 ## Features
 
+### 3D Visualization
+- Interactive 3D preview of STEP files:
+  - High-performance rendering using Three.js
+  - Dual display mode with solid and wireframe overlay
+  - Accurate geometry representation using CadQuery tessellation
+  - Smooth orbit controls and zoom functionality
+  - Grid and axis helpers for orientation
+  - Adaptive performance optimization
+
 ### Geometric Analysis
 - Basic Properties:
   - Volume (mm³) and surface area (mm²)
@@ -63,13 +72,14 @@ A powerful STEP file analysis tool for machining time estimation and part analys
   - FastAPI (Python)
   - CadQuery for STEP file processing
   - NumPy for geometric calculations
-  - Trimesh for mesh analysis
+  - Advanced geometry tessellation
   - JSON-based data persistence
 
 - Frontend:
   - React
   - Material-UI components
   - Three.js for 3D visualization
+  - React Three Fiber for 3D scene management
   - Modern responsive design
 
 ## Installation
@@ -117,7 +127,12 @@ The application will be available at:
 
 1. Upload a STEP file through the web interface
 2. Select material parameters (currently supporting aluminum)
-3. View detailed analysis including:
+3. View the interactive 3D preview:
+   - Orbit: Left mouse button
+   - Pan: Right mouse button
+   - Zoom: Mouse wheel
+   - Reset view: Double click
+4. View detailed analysis including:
    - Geometric properties (volume, weight, dimensions)
    - Feature detection and analysis
    - Required machining axes (3, 4, or 5-axis)
@@ -167,6 +182,14 @@ The complexity analysis takes into account multiple factors:
    - Surface finish implications
 
 ## Changelog
+
+### 2024-02-08
+- Major improvements to 3D visualization:
+  - Enhanced geometry processing using CadQuery tessellation
+  - Improved wireframe rendering with proper edge detection
+  - Fixed geometry display issues
+  - Added performance optimizations
+  - Better camera controls and grid system
 
 ### 2024-02-07
 - Rebranded to "HMT - Fast-Quote" with new logo

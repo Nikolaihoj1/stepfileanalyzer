@@ -297,141 +297,27 @@ def calculate_face_area(vertices):
 
 def extract_faces_and_vertices(file_path):
     """Extract faces and their vertices from STEP file."""
-    faces = []
-    vertices_dict = {}
-    edges_dict = {}
-    current_face = None
-    
     try:
-        with open(file_path, 'r') as f:
-            content = f.readlines()
-            
-        logger.info(f"Starting STEP file parsing, found {len(content)} lines")
+        # Load the STEP file using CadQuery
+        model = cq.importers.importStep(file_path)
+        shape = model.val()
         
-        # Debug counters
-        point_count = 0
-        edge_count = 0
-        face_count = 0
+        if shape is None:
+            raise ValueError("Could not load shape from STEP file")
         
-        # More flexible regex patterns
-        cartesian_point_patterns = [
-            r"#(\d+)\s*=\s*CARTESIAN_POINT\s*\([^(]*\(([-+]?\d*\.?\d+)\s*,\s*([-+]?\d*\.?\d+)\s*,\s*([-+]?\d*\.?\d+)\s*\)",
-            r"CARTESIAN_POINT\s*\([^(]*\(([-+]?\d*\.?\d+)\s*,\s*([-+]?\d*\.?\d+)\s*,\s*([-+]?\d*\.?\d+)\s*\)"
-        ]
+        # Get tessellated representation of the entire shape
+        logger.info("Tessellating shape...")
+        tess = shape.tessellate(tolerance=0.01)
+        vertices = [list(v) for v in tess[0]]  # Convert vertices to lists
+        faces = [list(f) for f in tess[1]]     # Convert faces to lists
         
-        edge_patterns = [
-            r"#(\d+)\s*=\s*EDGE_CURVE\s*\([^,]*,\s*[^,]*,\s*#(\d+)\s*,\s*#(\d+)",
-            r"EDGE_CURVE\s*\([^,]*,\s*[^,]*,\s*#(\d+)\s*,\s*#(\d+)"
-        ]
+        logger.info(f"Tessellation complete: {len(vertices)} vertices, {len(faces)} faces")
         
-        for line_num, line in enumerate(content, 1):
-            try:
-                # Try to extract CARTESIAN_POINT using multiple patterns
-                point_found = False
-                for pattern in cartesian_point_patterns:
-                    match = re.search(pattern, line)
-                    if match:
-                        if len(match.groups()) == 4:  # Pattern with ID
-                            point_id = match.group(1)
-                            x, y, z = map(float, match.groups()[1:])
-                        else:  # Pattern without ID
-                            point_id = str(len(vertices_dict) + 1)
-                            x, y, z = map(float, match.groups())
-                        vertices_dict[point_id] = [x, y, z]
-                        point_count += 1
-                        point_found = True
-                        if point_count % 100 == 0:
-                            logger.debug(f"Processed {point_count} points")
-                        break
-                
-                if point_found:
-                    continue
-                
-                # Try to extract EDGE_CURVE using multiple patterns
-                edge_found = False
-                for pattern in edge_patterns:
-                    match = re.search(pattern, line)
-                    if match:
-                        if len(match.groups()) == 3:  # Pattern with ID
-                            edge_id = match.group(1)
-                            start_vertex = match.group(2)
-                            end_vertex = match.group(3)
-                        else:  # Pattern without ID
-                            edge_id = str(len(edges_dict) + 1)
-                            start_vertex = match.group(1)
-                            end_vertex = match.group(2)
-                        edges_dict[edge_id] = (start_vertex, end_vertex)
-                        edge_count += 1
-                        edge_found = True
-                        break
-                
-                if edge_found:
-                    continue
-                
-                # Handle ADVANCED_FACE
-                if 'ADVANCED_FACE' in line or 'FACE_SURFACE' in line:
-                    # Process previous face if it exists
-                    if current_face and current_face['vertices']:
-                        unique_vertices = []
-                        seen = set()
-                        for v in current_face['vertices']:
-                            v_tuple = tuple(v)
-                            if v_tuple not in seen:
-                                unique_vertices.append(v)
-                                seen.add(v_tuple)
-                        if len(unique_vertices) >= 3:
-                            current_face['vertices'] = unique_vertices
-                            faces.append(current_face)
-                            face_count += 1
-                            logger.debug(f"Added face {face_count} with {len(unique_vertices)} vertices")
-                    
-                    # Start new face
-                    current_face = {'vertices': [], 'normal': None}
-                    continue
-                
-                # Extract ORIENTED_EDGE references
-                if 'ORIENTED_EDGE' in line:
-                    edge_refs = re.findall(r"#(\d+)", line)
-                    for edge_id in edge_refs:
-                        if edge_id in edges_dict:
-                            start_vertex, end_vertex = edges_dict[edge_id]
-                            if start_vertex in vertices_dict and current_face is not None:
-                                current_face['vertices'].append(vertices_dict[start_vertex])
-                            if end_vertex in vertices_dict and current_face is not None:
-                                current_face['vertices'].append(vertices_dict[end_vertex])
-                
-            except Exception as e:
-                logger.warning(f"Error processing line {line_num}: {str(e)}\nLine content: {line.strip()}")
-                continue
-        
-        # Process the last face
-        if current_face and len(current_face['vertices']) >= 3:
-            faces.append(current_face)
-            face_count += 1
-        
-        logger.info("STEP file parsing complete:")
-        logger.info(f"- Found {point_count} points")
-        logger.info(f"- Found {edge_count} edges")
-        logger.info(f"- Found {face_count} faces")
-        logger.info(f"- Vertices dictionary size: {len(vertices_dict)}")
-        logger.info(f"- Edges dictionary size: {len(edges_dict)}")
-        logger.info(f"- Final faces count: {len(faces)}")
-        
-        if not faces:
-            # Try to create a simple face from all vertices if no faces were found
-            if len(vertices_dict) >= 3:
-                logger.warning("No faces found, attempting to create a single face from all vertices")
-                all_vertices = list(vertices_dict.values())
-                faces.append({'vertices': all_vertices, 'normal': None})
-                logger.info(f"Created single face with {len(all_vertices)} vertices")
-            else:
-                logger.error("No valid faces found in STEP file. This could be due to:")
-                logger.error("1. Invalid file format")
-                logger.error("2. No geometric data in the file")
-                logger.error("3. Unsupported geometry representation")
-                raise ValueError("No valid faces found in STEP file")
-            
-        return faces
+        return {
+            "vertices": vertices,
+            "faces": faces,
+            "normal": None  # Not needed for visualization
+        }
         
     except Exception as e:
         logger.error(f"Error extracting geometry: {str(e)}")
@@ -947,111 +833,17 @@ async def get_geometry(file: UploadFile = File(...)):
             await file.seek(0)  # Reset file position
         
         try:
-            # Load the STEP file using CadQuery
-            logger.info("Loading STEP file...")
+            # Extract geometry using the improved function
+            geometry_data = extract_faces_and_vertices(temp_path)
+            
+            # Load shape for metadata
             model = cq.importers.importStep(temp_path)
             shape = model.val()
             
-            if shape is None:
-                raise ValueError("Could not load shape from STEP file")
-            
-            # Initialize lists for geometry data
-            vertices = []
-            faces = []
-            vertex_map = {}
-            
-            # First collect all vertices from the shape
-            logger.info("Processing vertices from shape...")
-            shape_vertices = list(shape.vertices())
-            logger.info(f"Found {len(shape_vertices)} vertices in shape")
-            
-            if not shape_vertices:
-                # Try to get vertices from edges if no vertices found directly
-                logger.info("No vertices found directly, trying to extract from edges...")
-                for edge in shape.edges():
-                    start_vertex = edge.startPoint()
-                    end_vertex = edge.endPoint()
-                    vertices.extend([list(start_vertex), list(end_vertex)])
-                logger.info(f"Found {len(vertices)} vertices from edges")
-            else:
-                # Process vertices from shape
-                for vertex in shape_vertices:
-                    pos = vertex.toTuple()
-                    vertices.append(list(pos))
-            
-            # Process faces
-            logger.info("Processing faces...")
-            shape_faces = list(shape.faces())
-            logger.info(f"Found {len(shape_faces)} faces in shape")
-            
-            for face_idx, face in enumerate(shape_faces):
-                try:
-                    # Get triangulation of the face with smaller tolerance
-                    tess = face.tessellate(tolerance=0.01)
-                    if not tess or len(tess) != 2:
-                        logger.warning(f"Invalid tessellation result for face {face_idx}")
-                        continue
-                    
-                    face_vertices, triangles = tess
-                    logger.debug(f"Face {face_idx}: {len(face_vertices)} vertices, {len(triangles)} triangle indices")
-                    
-                    if not face_vertices or not triangles:
-                        logger.warning(f"Empty tessellation data for face {face_idx}")
-                        continue
-                    
-                    # Add vertices from this face
-                    face_vertex_indices = []
-                    for vertex in face_vertices:
-                        vertex_tuple = tuple(vertex)
-                        if vertex_tuple not in vertex_map:
-                            vertex_map[vertex_tuple] = len(vertices)
-                            vertices.append(list(vertex))
-                            face_vertex_indices.append(len(vertices) - 1)
-                        else:
-                            face_vertex_indices.append(vertex_map[vertex_tuple])
-                    
-                    # Add triangles using the correct vertex indices
-                    for i in range(0, len(triangles), 3):
-                        if i + 2 < len(triangles):
-                            try:
-                                v1_idx = face_vertex_indices[triangles[i]]
-                                v2_idx = face_vertex_indices[triangles[i + 1]]
-                                v3_idx = face_vertex_indices[triangles[i + 2]]
-                                if v1_idx != v2_idx and v2_idx != v3_idx and v3_idx != v1_idx:
-                                    faces.append([v1_idx, v2_idx, v3_idx])
-                            except IndexError as e:
-                                logger.warning(f"Invalid triangle indices at face {face_idx}, triangle {i//3}: {str(e)}")
-                                continue
-                
-                except Exception as e:
-                    logger.warning(f"Error processing face {face_idx}: {str(e)}")
-                    continue
-            
-            logger.info(f"Final geometry: {len(vertices)} vertices and {len(faces)} triangles")
-            
-            if not vertices:
-                raise ValueError("No vertices could be extracted from the file")
-            
-            if not faces:
-                logger.warning("No faces extracted, attempting to create triangulation from vertices...")
-                # If we have vertices but no faces, try to create a simple triangulation
-                if len(vertices) >= 3:
-                    for i in range(0, len(vertices) - 2, 3):
-                        faces.append([i, i+1, i+2])
-                    logger.info(f"Created {len(faces)} triangles from vertices")
-            
-            # Get bounding box using BoundingBox() method
+            # Get bounding box
             bbox = shape.BoundingBox()
-            if not bbox:
-                # Calculate bounding box manually if the method fails
-                logger.warning("BoundingBox() failed, calculating manually...")
-                vertices_array = np.array(vertices)
-                bbox_min = vertices_array.min(axis=0)
-                bbox_max = vertices_array.max(axis=0)
-            else:
-                bbox_min = [bbox.xmin, bbox.ymin, bbox.zmin]
-                bbox_max = [bbox.xmax, bbox.ymax, bbox.zmax]
-            
+            bbox_min = [bbox.xmin, bbox.ymin, bbox.zmin]
+            bbox_max = [bbox.xmax, bbox.ymax, bbox.zmax]
             dimensions = [
                 bbox_max[0] - bbox_min[0],
                 bbox_max[1] - bbox_min[1],
@@ -1060,19 +852,16 @@ async def get_geometry(file: UploadFile = File(...)):
             
             # Count geometric entities
             entity_counts = {
-                "vertices": len(vertices),
-                "faces": len(faces),
+                "vertices": len(geometry_data["vertices"]),
+                "faces": len(geometry_data["faces"]),
                 "edges": len(list(shape.edges()))
             }
             
             logger.info(f"Final counts: {entity_counts}")
             
-            if not vertices or not faces:
-                raise ValueError("No valid geometry data extracted from the file")
-            
             return {
-                "vertices": vertices,
-                "faces": faces,
+                "vertices": geometry_data["vertices"],
+                "faces": geometry_data["faces"],
                 "metadata": {
                     "original_bounds": {
                         "min": bbox_min,

@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, Suspense } from 'react';
+import React, { useEffect, useState, Suspense } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { 
   OrbitControls, 
@@ -14,7 +14,6 @@ import * as THREE from 'three';
 function Model({ geometryData }) {
   const [geometry, setGeometry] = useState(null);
   const [error, setError] = useState(null);
-  const meshRef = useRef();
 
   useEffect(() => {
     try {
@@ -23,31 +22,52 @@ function Model({ geometryData }) {
         return;
       }
 
-      console.log('Creating Three.js geometry...');
+      console.log('Creating geometry with:', {
+        vertices: geometryData.vertices.length,
+        faces: geometryData.faces.length
+      });
+
       const newGeometry = new THREE.BufferGeometry();
       
-      // Add vertices
-      const vertices = new Float32Array(geometryData.vertices.flat());
-      newGeometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+      // Convert vertices array to Float32Array
+      const vertices = new Float32Array(geometryData.vertices.length * 3);
+      geometryData.vertices.forEach((vertex, i) => {
+        vertices[i * 3] = vertex[0];     // x
+        vertices[i * 3 + 1] = vertex[1];  // y
+        vertices[i * 3 + 2] = vertex[2];  // z
+      });
       
-      // Add faces
-      const indices = new Uint32Array(geometryData.faces.flat());
+      // Convert faces array to Uint32Array
+      const indices = new Uint32Array(geometryData.faces.length * 3);
+      geometryData.faces.forEach((face, i) => {
+        indices[i * 3] = face[0];     // first vertex index
+        indices[i * 3 + 1] = face[1];  // second vertex index
+        indices[i * 3 + 2] = face[2];  // third vertex index
+      });
+
+      // Set attributes
+      newGeometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
       newGeometry.setIndex(new THREE.BufferAttribute(indices, 1));
       
-      // Compute normals
+      // Compute face normals for proper lighting
       newGeometry.computeVertexNormals();
       
       // Center and scale geometry
       newGeometry.computeBoundingBox();
       const bbox = newGeometry.boundingBox;
+      const center = new THREE.Vector3();
+      bbox.getCenter(center);
       
-      newGeometry.center();
+      // Calculate scale to fit in view
       const maxDim = Math.max(
         bbox.max.x - bbox.min.x,
         bbox.max.y - bbox.min.y,
         bbox.max.z - bbox.min.z
       );
-      const scale = 5 / maxDim;
+      const scale = 10 / maxDim; // Scale for better visibility
+      
+      // Apply transformations
+      newGeometry.translate(-center.x, -center.y, -center.z);
       newGeometry.scale(scale, scale, scale);
       
       console.log('Geometry created successfully');
@@ -75,11 +95,23 @@ function Model({ geometryData }) {
       {/* Debug axes helper */}
       <axesHelper args={[5]} />
       
-      {/* Wireframe mesh */}
+      {/* Solid mesh */}
+      <mesh geometry={geometry}>
+        <meshPhongMaterial 
+          color="#cccccc"
+          transparent={true}
+          opacity={0.8}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+      
+      {/* Wireframe using EdgesGeometry */}
       <lineSegments>
-        <wireframeGeometry args={[geometry]} />
+        <edgesGeometry args={[geometry]} />
         <lineBasicMaterial 
           color="#00ff00"
+          transparent={true}
+          opacity={1}
           linewidth={1}
         />
       </lineSegments>
