@@ -67,19 +67,75 @@ app.add_middleware(
 
 # Material properties
 MATERIAL_PARAMS = {
-    "aluminum": {
+    "aluminum_6082": {
+        "name": "Aluminum 6082",
         "density": 2.7,  # g/cm³
         "base_removal_rate": 25000,  # cubic mm per minute
-        "complexity_factor": 0.5,    # multiplier for complex geometries (reduced from 0.8)
-        "setup_time": 60,          # minutes (reduced from 180)
-        "programming_time": 60,    # minutes (reduced from 120)
+        "complexity_factor": 0.5,    # multiplier for complex geometries
+        "setup_time": 60,          # minutes
+        "programming_time": 60,    # minutes
         "tool_change_time": 5,      # minutes per tool change
         "finishing_factor": 0.3,    # multiplier for finishing operations
-        "target_machining_time": 60,  # target machining time in minutes (reduced from 140)
+        "target_machining_time": 60,  # target machining time in minutes
         "stock_margin": 5,  # mm to add to each dimension for raw stock
-        "calibration_data": {}  # Dictionary to store calibration data by filename
+        "calibration_data": {},  # Dictionary to store calibration data by filename
+        "machinability_rating": 1.0  # Base reference for machinability
+    },
+    "steel_s355": {
+        "name": "Steel S355",
+        "density": 7.85,  # g/cm³
+        "base_removal_rate": 8000,   # Lower removal rate for steel
+        "complexity_factor": 0.7,    # Higher complexity factor due to material hardness
+        "setup_time": 90,           # Longer setup time for steel
+        "programming_time": 75,     # More complex programming for steel
+        "tool_change_time": 8,      # More frequent tool changes
+        "finishing_factor": 0.4,    # More finishing time needed
+        "target_machining_time": 120,  # Longer base machining time
+        "stock_margin": 6,  # Slightly larger margin for steel
+        "calibration_data": {},
+        "machinability_rating": 0.4  # Harder to machine than aluminum
+    },
+    "steel_30crni": {
+        "name": "Steel 30CrNi",
+        "density": 7.85,  # g/cm³
+        "base_removal_rate": 6000,   # Lower removal rate for alloy steel
+        "complexity_factor": 0.8,    # Higher complexity due to material properties
+        "setup_time": 100,          # More setup time needed
+        "programming_time": 90,     # More complex programming
+        "tool_change_time": 10,     # More frequent tool changes
+        "finishing_factor": 0.5,    # More finishing time needed
+        "target_machining_time": 150,  # Longer machining time
+        "stock_margin": 6,  # Similar margin to other steels
+        "calibration_data": {},
+        "machinability_rating": 0.3  # Harder to machine than S355
+    },
+    "stainless_316l": {
+        "name": "Stainless Steel 316L",
+        "density": 8.0,  # g/cm³
+        "base_removal_rate": 4000,   # Much lower removal rate for stainless
+        "complexity_factor": 0.9,    # Highest complexity factor
+        "setup_time": 120,          # Longest setup time
+        "programming_time": 100,    # Most complex programming
+        "tool_change_time": 12,     # Most frequent tool changes
+        "finishing_factor": 0.6,    # Most finishing time needed
+        "target_machining_time": 180,  # Longest machining time
+        "stock_margin": 7,  # Larger margin for stainless
+        "calibration_data": {},
+        "machinability_rating": 0.2  # Hardest to machine
     }
 }
+
+# Ensure data directory exists
+data_dir = os.path.join(os.path.dirname(__file__), 'data')
+os.makedirs(data_dir, exist_ok=True)
+
+# Initialize material_params.json if it doesn't exist
+material_params_file = os.path.join(data_dir, 'material_params.json')
+if not os.path.exists(material_params_file):
+    logger.info("Creating initial material_params.json")
+    with open(material_params_file, 'w') as f:
+        json.dump(MATERIAL_PARAMS, f, indent=2)
+    logger.info("Initial material_params.json created")
 
 def save_material_params():
     """Save material parameters to a JSON file."""
@@ -605,118 +661,132 @@ async def analyze_step_file_endpoint(file: UploadFile = File(...), material: str
     Analyze a STEP file and return its geometric properties.
     """
     try:
+        # Validate material
         if material not in MATERIAL_PARAMS:
+            logger.error(f"Invalid material specified: {material}")
             raise HTTPException(status_code=400, detail=f"Unsupported material: {material}")
             
         # Create a temporary file to save the uploaded content
         temp_file = Path("temp_step_file.step")
         try:
             # Save uploaded file
+            content = await file.read()
             with open(temp_file, "wb") as buffer:
-                content = await file.read()
                 buffer.write(content)
+            await file.seek(0)  # Reset file position for future reads
             
-            # Load the STEP file using CadQuery
-            model = cq.importers.importStep(str(temp_file))
-            shape = model.val()
-            
-            # Get basic measurements using CadQuery
-            results = analyze_step_with_cadquery(str(temp_file))
-            
-            # Extract features data from results
-            features_data = results.get("features_data", {"estimated_axes": 3, "reasons": ["Default to 3-axis"]})
-            
-            # Count entities using CadQuery's high-level API
-            entity_counts = {
-                "face_count": len(list(shape.faces())),
-                "vertex_count": len(list(shape.vertices())),
-                "edge_count": len(list(shape.edges()))
-            }
-            entity_counts["total_entities"] = sum(entity_counts.values())
-            
-            # Calculate part weight using density
-            density_kg_per_mm3 = MATERIAL_PARAMS[material]["density"] * 1e-6  # Convert g/cm³ to kg/mm³
-            part_weight_kg = results["volume"] * density_kg_per_mm3
-            
-            # Calculate raw stock dimensions (add margin)
-            margin = MATERIAL_PARAMS[material]["stock_margin"]
-            raw_dimensions = [d + (2 * margin) for d in results["dimensions"]]
-            raw_volume = raw_dimensions[0] * raw_dimensions[1] * raw_dimensions[2]
-            raw_weight = raw_volume * density_kg_per_mm3
-            
-            # Calculate material removal
-            material_removal = calculate_material_removal(results["volume"], raw_volume)
-            
-            # Calculate complexity score based on multiple factors
-            # 1. Surface area to volume ratio (normalized)
-            sa_to_vol_ratio = results["surface_area"] / results["volume"]
-            sa_to_vol_score = min(50, (sa_to_vol_ratio * 1000))  # Scale and cap at 50
-            
-            # 2. Entity count score (normalized)
-            max_expected_entities = 10000  # Adjust based on typical part complexity
-            entity_score = min(50, (entity_counts["total_entities"] / max_expected_entities) * 50)
-            
-            # Combine scores
-            complexity_score = sa_to_vol_score + entity_score
-            
-            # Calculate machining time estimate
-            time_estimate = calculate_machining_time(
-                volume_mm3=results["volume"],
-                complexity_score=complexity_score,
-                material=material,
-                material_removal=material_removal
-            )
-            
-            # Format the response
-            response = {
-                "basic_info": {
-                    "volume_mm3": results["volume"],
-                    "weight_kg": part_weight_kg,
-                    "bounding_box_mm": {
-                        "dimensions": results["dimensions"],
-                        "min_corner": results["bounding_box"]["min"],
-                        "max_corner": results["bounding_box"]["max"]
-                    }
-                },
-                "raw_stock": {
-                    "dimensions": raw_dimensions,
-                    "volume_mm3": raw_volume,
-                    "weight_kg": raw_weight
-                },
-                "material_removal": material_removal,
-                "complexity": {
-                    "surface_area_mm2": results["surface_area"],
-                    "face_count": entity_counts["face_count"],
-                    "vertex_count": entity_counts["vertex_count"],
-                    "edge_count": entity_counts["edge_count"],
-                    "total_entities": entity_counts["total_entities"],
-                    "surface_area_to_volume_ratio": sa_to_vol_ratio
-                },
-                "machining_estimate": {
-                    "complexity_score": round(complexity_score, 2),
-                    "complexity_level": get_complexity_level(complexity_score),
-                    "required_axes": features_data["estimated_axes"],
-                    "estimated_machine_time_minutes": time_estimate["total_time"],
-                    "setup_time_minutes": time_estimate["setup_time"],
-                    "programming_time_minutes": time_estimate["programming_time"],
-                    "machining_time_minutes": time_estimate["machining_time"],
-                    "confidence_score": time_estimate["confidence_score"],
-                    "calibration_points_used": time_estimate["calibration_points_used"],
-                    "similar_parts": time_estimate.get("similar_parts", []),
-                    "batch_estimates": time_estimate.get("batch_estimates", {})
+            # Load and validate the STEP file
+            try:
+                model = cq.importers.importStep(str(temp_file))
+                shape = model.val()
+                
+                if shape is None:
+                    raise ValueError("Could not load shape from STEP file")
+                    
+                # Get basic measurements using CadQuery
+                logger.info(f"Analyzing STEP file: {file.filename}")
+                results = analyze_step_with_cadquery(str(temp_file))
+                
+                # Extract features data
+                features_data = results.get("features_data", {"estimated_axes": 3})
+                
+                # Count entities
+                entity_counts = {
+                    "face_count": len(list(shape.faces())),
+                    "vertex_count": len(list(shape.vertices())),
+                    "edge_count": len(list(shape.edges()))
                 }
-            }
-            
-            return response
-            
+                entity_counts["total_entities"] = sum(entity_counts.values())
+                
+                # Calculate part weight
+                density_kg_per_mm3 = MATERIAL_PARAMS[material]["density"] * 1e-6
+                part_weight_kg = results["volume"] * density_kg_per_mm3
+                
+                # Calculate raw stock dimensions
+                margin = MATERIAL_PARAMS[material]["stock_margin"]
+                raw_dimensions = [d + (2 * margin) for d in results["dimensions"]]
+                raw_volume = raw_dimensions[0] * raw_dimensions[1] * raw_dimensions[2]
+                raw_weight = raw_volume * density_kg_per_mm3
+                
+                # Calculate material removal
+                material_removal = {
+                    "removed_volume_mm3": raw_volume - results["volume"],
+                    "removal_percentage": ((raw_volume - results["volume"]) / raw_volume) * 100
+                }
+                
+                # Calculate complexity score
+                sa_to_vol_ratio = results["surface_area"] / results["volume"]
+                sa_to_vol_score = min(50, (sa_to_vol_ratio * 1000))
+                
+                max_expected_entities = 10000
+                entity_score = min(50, (entity_counts["total_entities"] / max_expected_entities) * 50)
+                
+                complexity_score = sa_to_vol_score + entity_score
+                
+                # Calculate machining time
+                time_estimate = calculate_machining_time(
+                    volume_mm3=results["volume"],
+                    complexity_score=complexity_score,
+                    material=material,
+                    material_removal=material_removal
+                )
+                
+                # Format response
+                response = {
+                    "basic_info": {
+                        "volume_mm3": results["volume"],
+                        "weight_kg": part_weight_kg,
+                        "bounding_box_mm": {
+                            "dimensions": results["dimensions"],
+                            "min_corner": results["bounding_box"]["min"],
+                            "max_corner": results["bounding_box"]["max"]
+                        }
+                    },
+                    "raw_stock": {
+                        "dimensions": raw_dimensions,
+                        "volume_mm3": raw_volume,
+                        "weight_kg": raw_weight
+                    },
+                    "material_removal": material_removal,
+                    "complexity": {
+                        "surface_area_mm2": results["surface_area"],
+                        "face_count": entity_counts["face_count"],
+                        "vertex_count": entity_counts["vertex_count"],
+                        "edge_count": entity_counts["edge_count"],
+                        "total_entities": entity_counts["total_entities"],
+                        "surface_area_to_volume_ratio": sa_to_vol_ratio
+                    },
+                    "machining_estimate": {
+                        "complexity_score": round(complexity_score, 2),
+                        "complexity_level": get_complexity_level(complexity_score),
+                        "required_axes": features_data["estimated_axes"],
+                        "setup_time_minutes": time_estimate["setup_time"],
+                        "programming_time_minutes": time_estimate["programming_time"],
+                        "machining_time_minutes": time_estimate["machining_time"],
+                        "estimated_machine_time_minutes": time_estimate["total_time"],
+                        "confidence_score": time_estimate["confidence_score"],
+                        "calibration_points_used": time_estimate["calibration_points_used"],
+                        "similar_parts": time_estimate.get("similar_parts", []),
+                        "batch_estimates": time_estimate.get("batch_estimates", {})
+                    }
+                }
+                
+                return response
+                
+            except Exception as e:
+                logger.error(f"Error processing STEP file: {str(e)}")
+                raise HTTPException(status_code=400, detail=f"Invalid STEP file: {str(e)}")
+                
         finally:
-            # Clean up the temporary file
+            # Clean up temporary file
             if temp_file.exists():
                 temp_file.unlink()
                 
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error processing STEP file: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Unexpected error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
 
 @app.get("/")
 async def read_root():

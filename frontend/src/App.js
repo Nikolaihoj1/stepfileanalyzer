@@ -58,7 +58,7 @@ function App() {
   const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [analysisResults, setAnalysisResults] = useState(null);
-  const [material, setMaterial] = useState('aluminum');
+  const [material, setMaterial] = useState('aluminum_6082');
   const [error, setError] = useState(null);
   const [calibrationOpen, setCalibrationOpen] = useState(false);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
@@ -70,6 +70,13 @@ function App() {
   const fileInputRef = useRef();
   const [geometryData, setGeometryData] = useState(null);
   const [tabValue, setTabValue] = useState(0);
+
+  const MATERIAL_OPTIONS = [
+    { value: 'aluminum_6082', label: 'Aluminum 6082', color: '#A8A8A8' },
+    { value: 'steel_s355', label: 'Steel S355', color: '#6B6B6B' },
+    { value: 'steel_30crni', label: 'Steel 30CrNi', color: '#4A4A4A' },
+    { value: 'stainless_316l', label: 'Stainless Steel 316L', color: '#8C8C8C' }
+  ];
 
   const handleTabChange = (event, newValue) => {
     setTabValue(newValue);
@@ -134,13 +141,14 @@ function App() {
 
     setLoading(true);
     setError(null);
-    setGeometryData(null); // Reset geometry data
+    setGeometryData(null);
     
     const formData = new FormData();
     formData.append('file', file);
     formData.append('material', material);
 
     try {
+      // First try to analyze the file
       const response = await fetch(`${API_BASE_URL}/analyze`, {
         method: 'POST',
         body: formData,
@@ -154,36 +162,32 @@ function App() {
       const data = await response.json();
       setAnalysisResults(data);
       
-      // Get geometry data for 3D preview
-      console.log('Fetching geometry data...');
-      const geometryResponse = await fetch(`${API_BASE_URL}/geometry`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      console.log('Geometry response status:', geometryResponse.status);
-      
-      if (geometryResponse.ok) {
-        const geometryData = await geometryResponse.json();
-        console.log('Received geometry data:', geometryData);
-        if (geometryData.vertices && geometryData.faces) {
-          console.log('Number of vertices:', geometryData.vertices.length);
-          console.log('Number of faces:', geometryData.faces.length);
-          console.log('First few vertices:', geometryData.vertices.slice(0, 3));
-          console.log('First few faces:', geometryData.faces.slice(0, 3));
-          setGeometryData(geometryData);
+      // Then try to get geometry data
+      try {
+        const geometryResponse = await fetch(`${API_BASE_URL}/geometry`, {
+          method: 'POST',
+          body: formData,
+        });
+        
+        if (geometryResponse.ok) {
+          const geometryData = await geometryResponse.json();
+          if (geometryData.vertices && geometryData.faces) {
+            setGeometryData(geometryData);
+          } else {
+            console.warn('Invalid geometry data structure received');
+            // Don't throw error here, just continue without 3D preview
+          }
         } else {
-          console.error('Invalid geometry data structure:', geometryData);
-          setError('Invalid geometry data received from server');
+          console.warn('Failed to get geometry data');
+          // Don't throw error here, just continue without 3D preview
         }
-      } else {
-        const errorData = await geometryResponse.json();
-        console.error('Geometry endpoint error:', errorData);
-        throw new Error(errorData.detail || 'Error getting geometry data');
+      } catch (geometryError) {
+        console.warn('Error fetching geometry:', geometryError);
+        // Don't throw error here, just continue without 3D preview
       }
     } catch (err) {
-      console.error('Error:', err);
       setError(err.message);
+      setAnalysisResults(null);
     } finally {
       setLoading(false);
     }
@@ -363,7 +367,25 @@ function App() {
                   label="Material"
                   onChange={handleMaterialChange}
                 >
-                  <MenuItem value="aluminum">Aluminum</MenuItem>
+                  {MATERIAL_OPTIONS.map((option) => (
+                    <MenuItem 
+                      key={option.value} 
+                      value={option.value}
+                      sx={{
+                        '&:before': {
+                          content: '""',
+                          display: 'block',
+                          width: 14,
+                          height: 14,
+                          mr: 1,
+                          backgroundColor: option.color,
+                          borderRadius: '50%'
+                        }
+                      }}
+                    >
+                      {option.label}
+                    </MenuItem>
+                  ))}
                 </Select>
               </FormControl>
             </Grid>
