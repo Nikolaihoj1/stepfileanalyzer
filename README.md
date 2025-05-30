@@ -4,27 +4,72 @@ A powerful STEP file analysis tool for machining time estimation and part analys
 
 ## Features
 
-- STEP file geometry analysis
-- Accurate volume and weight calculations
-- Raw stock calculation with margins
-- Material removal estimation
-- Machining time prediction with calibration system
-- Setup and programming time estimation
-- Material parameter management
-- Persistent calibration data storage
-- Batch quantity estimation (1, 5, 10, 20, 50 pieces)
+### Geometric Analysis
+- Basic Properties:
+  - Volume (mm³) and surface area (mm²)
+  - Dimensions (length, width, height)
+  - Bounding box coordinates
+  - Weight calculation based on material
+
+- Entity Analysis:
+  - Face count
+  - Edge count
+  - Vertex count
+  - Total entities count
+
+- Feature Detection:
+  - Holes (count, radius, location)
+  - Pockets (count, area, location)
+  - Small radii features
+  - Required machining axes (3, 4, or 5-axis)
+
+### Manufacturing Analysis
+- Material Processing:
+  - Raw stock dimensions with margins
+  - Raw stock volume and weight
+  - Material removal volume and percentage
+  - Material-specific parameters (density, stock margin)
+
+- Complexity Assessment:
+  - Surface area to volume ratio analysis
+  - Entity count scoring
+  - Feature complexity evaluation
+  - Overall complexity score and level classification
+    - Simple
+    - Moderate
+    - Complex
+    - Very Complex
+    - Extremely Complex
+
+- Time Estimation:
+  - Setup time
+  - Programming time
+  - Machining time
+  - Total processing time
+  - Confidence scoring
+  - Similar parts comparison
+  - Batch processing estimates
+
+- Machining Strategy:
+  - Automatic determination of required machining axes (3, 4, or 5-axis)
+  - Tool accessibility analysis
+  - Feature orientation assessment
+  - Undercut detection
+  - Complex surface evaluation
 
 ## Tech Stack
 
 - Backend:
   - FastAPI (Python)
+  - CadQuery for STEP file processing
   - NumPy for geometric calculations
-  - STEP file parsing with regex
+  - Trimesh for mesh analysis
   - JSON-based data persistence
 
 - Frontend:
   - React
   - Material-UI components
+  - Three.js for 3D visualization
   - Modern responsive design
 
 ## Installation
@@ -73,11 +118,13 @@ The application will be available at:
 1. Upload a STEP file through the web interface
 2. Select material parameters (currently supporting aluminum)
 3. View detailed analysis including:
-   - Part volume and weight
-   - Raw stock dimensions
-   - Material removal calculations
-   - Estimated machining times
-   - Complexity analysis
+   - Geometric properties (volume, weight, dimensions)
+   - Feature detection and analysis
+   - Required machining axes (3, 4, or 5-axis)
+   - Raw stock calculations
+   - Material removal estimates
+   - Complexity assessment
+   - Machining time estimates
    - Batch quantity estimates
 
 ## Calibration System
@@ -90,6 +137,34 @@ The system includes a calibration feature that improves time estimates based on 
    - Programming time
    - Machining time
 3. The system will use this data to improve future estimates
+
+## Analysis Methodology
+
+The complexity analysis takes into account multiple factors:
+
+1. Volume Complexity:
+   - Based on the ratio of surface area to volume
+   - Normalized and weighted for balanced scoring
+
+2. Feature Complexity:
+   - Number and types of features (holes, pockets, small radii)
+   - Feature size and location analysis
+   - Manufacturing difficulty assessment
+
+3. Axis Complexity:
+   - Required number of machining axes (3, 4, or 5-axis) determined by:
+     - Feature orientations and accessibility
+     - Undercut presence
+     - Deep pocket analysis
+     - Surface normal variations
+     - Tool approach requirements
+   - Tool accessibility evaluation
+   - Setup complexity consideration
+
+4. Precision Complexity:
+   - Based on smallest radius features
+   - Tolerance requirements assessment
+   - Surface finish implications
 
 ## Changelog
 

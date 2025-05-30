@@ -14,6 +14,7 @@ import {
   Chip
 } from '@mui/material';
 import { KeyboardArrowDown, KeyboardArrowUp } from '@mui/icons-material';
+import { API_BASE_URL } from '../config';
 
 function Row({ row }) {
   const [open, setOpen] = useState(false);
@@ -87,7 +88,7 @@ function HistoryView({ material }) {
   const [history, setHistory] = useState([]);
 
   useEffect(() => {
-    fetch(`http://localhost:8000/history?material=${material}`)
+    fetch(`${API_BASE_URL}/history?material=${material}`)
       .then(response => response.json())
       .then(data => {
         setHistory(data.history);

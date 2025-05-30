@@ -32,6 +32,7 @@ import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import TuneIcon from '@mui/icons-material/Tune';
 import StepViewer from './components/StepViewer';
 import HistoryView from './components/HistoryView';
+import { API_BASE_URL } from './config';
 
 function TabPanel(props) {
   const { children, value, index, ...other } = props;
@@ -101,7 +102,7 @@ function App() {
     formData.append('machining_time', calibrationData.machiningTime);
 
     try {
-      const response = await fetch('http://localhost:8000/calibrate', {
+      const response = await fetch(`${API_BASE_URL}/calibrate`, {
         method: 'POST',
         body: formData,
       });
@@ -140,7 +141,7 @@ function App() {
     formData.append('material', material);
 
     try {
-      const response = await fetch('http://localhost:8000/analyze', {
+      const response = await fetch(`${API_BASE_URL}/analyze`, {
         method: 'POST',
         body: formData,
       });
@@ -155,7 +156,7 @@ function App() {
       
       // Get geometry data for 3D preview
       console.log('Fetching geometry data...');
-      const geometryResponse = await fetch('http://localhost:8000/geometry', {
+      const geometryResponse = await fetch(`${API_BASE_URL}/geometry`, {
         method: 'POST',
         body: formData,
       });
@@ -213,6 +214,9 @@ function App() {
           <Typography>
             Dimensions (L×W×H): {basic_info?.bounding_box_mm?.dimensions ? basic_info.bounding_box_mm.dimensions.map(d => formatNumber(d)).join(' × ') : 'N/A'} mm
           </Typography>
+          <Typography>
+            Required Machining: {machining_estimate?.required_axes}-axis
+          </Typography>
         </Box>
 
         <Box sx={{ mb: 2 }}>
@@ -244,6 +248,9 @@ function App() {
           </Typography>
           <Typography>
             Total Entities: {formatNumber(complexity?.total_entities)}
+          </Typography>
+          <Typography>
+            Required Machining: {machining_estimate?.required_axes || 3}-axis
           </Typography>
         </Box>
 

@@ -50,10 +50,19 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://192.168.0.12:3000",  # Local network access
+        "http://127.0.0.1:3000",
+        "http://94.145.236.170:3000",     # External IP frontend access
+        "http://94.145.236.170:8000",     # External IP backend access
+        "https://94.145.236.170:3000",    # HTTPS frontend
+        "https://94.145.236.170:8000"     # HTTPS backend
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"]  # Add this to expose all headers
 )
 
 # Material properties
@@ -604,13 +613,15 @@ async def analyze_step_file(file: UploadFile, material: str):
                     "machining_estimate": {
                         "complexity_score": round(complexity_score, 2),
                         "complexity_level": get_complexity_level(complexity_score),
+                        "required_axes": features_data["estimated_axes"],
                         "estimated_machine_time_minutes": time_estimate["total_time"],
                         "setup_time_minutes": time_estimate["setup_time"],
                         "programming_time_minutes": time_estimate["programming_time"],
                         "machining_time_minutes": time_estimate["machining_time"],
                         "confidence_score": time_estimate["confidence_score"],
                         "calibration_points_used": time_estimate["calibration_points_used"],
-                        "similar_parts": time_estimate["similar_parts"]
+                        "similar_parts": time_estimate.get("similar_parts", []),
+                        "batch_estimates": time_estimate.get("batch_estimates", {})
                     }
                 }
                 
@@ -726,6 +737,9 @@ async def analyze_step_file_endpoint(file: UploadFile = File(...), material: str
             # Get basic measurements using CadQuery
             results = analyze_step_with_cadquery(str(temp_file))
             
+            # Extract features data from results
+            features_data = results.get("features_data", {"estimated_axes": 3, "reasons": ["Default to 3-axis"]})
+            
             # Count entities using CadQuery's high-level API
             entity_counts = {
                 "face_count": len(list(shape.faces())),
@@ -795,6 +809,7 @@ async def analyze_step_file_endpoint(file: UploadFile = File(...), material: str
                 "machining_estimate": {
                     "complexity_score": round(complexity_score, 2),
                     "complexity_level": get_complexity_level(complexity_score),
+                    "required_axes": features_data["estimated_axes"],
                     "estimated_machine_time_minutes": time_estimate["total_time"],
                     "setup_time_minutes": time_estimate["setup_time"],
                     "programming_time_minutes": time_estimate["programming_time"],
@@ -1079,6 +1094,101 @@ async def get_geometry(file: UploadFile = File(...)):
         logger.error(f"Error handling file upload: {str(e)}")
         raise HTTPException(status_code=400, detail=f"Error handling file upload: {str(e)}")
 
+def determine_required_axes(shape, faces):
+    """
+    Determine the number of axes required for machining based on part geometry.
+    
+    Parameters:
+    -----------
+    shape : cadquery.Shape
+        The CadQuery shape object
+    faces : list
+        List of faces with vertices and normals
+        
+    Returns:
+    --------
+    dict
+        Dictionary containing:
+        - estimated_axes: int (3, 4, or 5)
+        - reasons: list of reasons for the axis determination
+    """
+    reasons = []
+    
+    try:
+        # Get all face normals
+        face_normals = []
+        unique_directions = set()
+        
+        # Analyze faces from the shape
+        for face in shape.faces():
+            normal = face.normalAt()
+            face_normals.append(normal)
+            
+            # Add normalized direction to unique set (rounded to 3 decimals)
+            direction = tuple(round(x, 3) for x in [normal.x, normal.y, normal.z])
+            unique_directions.add(direction)
+        
+        # Count unique normal directions
+        num_unique_directions = len(unique_directions)
+        
+        # Initialize to 3-axis as default
+        required_axes = 3
+        
+        # Check for features requiring more axes
+        if num_unique_directions > 6:  # More than 6 unique face orientations
+            required_axes = 5
+            reasons.append("Multiple face orientations requiring 5-axis machining")
+        
+        # Check for undercuts
+        has_undercuts = False
+        for normal in face_normals:
+            # Check if face normal is not aligned with primary axes
+            if (abs(abs(normal.x) - 1.0) > 0.1 and 
+                abs(abs(normal.y) - 1.0) > 0.1 and 
+                abs(abs(normal.z) - 1.0) > 0.1):
+                has_undercuts = True
+                break
+        
+        if has_undercuts and required_axes < 4:
+            required_axes = 4
+            reasons.append("Undercuts detected requiring 4-axis machining")
+        
+        # Check for deep pockets or holes
+        for face in shape.faces():
+            try:
+                # Get face bounds
+                face_bb = face.BoundingBox()
+                depth = max(
+                    face_bb.xmax - face_bb.xmin,
+                    face_bb.ymax - face_bb.ymin,
+                    face_bb.zmax - face_bb.zmin
+                )
+                
+                # If depth is significant compared to other dimensions
+                if depth > min(face_bb.xlen, face_bb.ylen, face_bb.zlen) * 3:
+                    if required_axes < 4:
+                        required_axes = 4
+                        reasons.append("Deep features requiring 4-axis machining")
+                    break
+            except:
+                continue
+        
+        # If no specific features are found, keep it at 3-axis
+        if not reasons:
+            reasons.append("Standard 3-axis machining features")
+        
+        return {
+            "estimated_axes": required_axes,
+            "reasons": reasons
+        }
+        
+    except Exception as e:
+        logger.warning(f"Error determining required axes: {str(e)}")
+        return {
+            "estimated_axes": 3,  # Default to 3-axis if analysis fails
+            "reasons": ["Default to 3-axis due to analysis error"]
+        }
+
 def analyze_step_with_cadquery(file_path):
     """
     Analyze a STEP file using CadQuery to extract accurate geometric information.
@@ -1096,6 +1206,7 @@ def analyze_step_with_cadquery(file_path):
         - volume: in mm³
         - surface_area: in mm²
         - center_of_mass: [x, y, z] coordinates
+        - features_data: dict with machining features analysis
     """
     try:
         # Load the STEP file
@@ -1125,6 +1236,12 @@ def analyze_step_with_cadquery(file_path):
         com = solid.Center()
         center_of_mass = [com.x, com.y, com.z]
         
+        # Extract faces for feature analysis
+        faces = extract_faces_and_vertices(file_path)
+        
+        # Determine required machining axes
+        features_data = determine_required_axes(solid, faces)
+        
         return {
             "dimensions": dimensions,
             "volume": volume,
@@ -1133,7 +1250,8 @@ def analyze_step_with_cadquery(file_path):
             "bounding_box": {
                 "min": [bb.xmin, bb.ymin, bb.zmin],
                 "max": [bb.xmax, bb.ymax, bb.zmax]
-            }
+            },
+            "features_data": features_data
         }
         
     except Exception as e:

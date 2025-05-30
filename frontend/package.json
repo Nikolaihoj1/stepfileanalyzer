@@ -10,11 +10,20 @@
     "@react-three/drei": "^9.56.24",
     "@react-three/fiber": "^8.9.1",
     "axios": "^1.5.0",
+    "nth-check": "^2.1.1",
+    "postcss": "^8.4.31",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-scripts": "5.0.1",
+    "react-scripts": "^5.0.1",
     "react-three-fiber": "^6.0.13",
-    "three": "^0.150.1"
+    "three": "^0.159.0"
+  },
+  "overrides": {
+    "nth-check": "^2.1.1",
+    "postcss": "^8.4.31",
+    "svgo": "^3.0.2",
+    "css-select": "^5.1.0",
+    "three": "^0.159.0"
   },
   "scripts": {
     "start": "react-scripts start",

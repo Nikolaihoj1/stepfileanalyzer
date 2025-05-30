@@ -1,6 +1,10 @@
 fastapi==0.104.1
 uvicorn==0.24.0
 python-multipart==0.0.6
-numpy==1.26.2
-steputils==0.2.0
-python-json-logger==2.0.7 
+numpy>=2.0.0
+steputils==0.1
+python-json-logger==2.0.7
+cadquery>=2.0
+trimesh>=3.20.0
+scipy>=1.10.0
+python-dotenv>=1.0.0 
