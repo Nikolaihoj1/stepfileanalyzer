@@ -83,7 +83,7 @@ A powerful STEP file analysis tool for machining time estimation and part analys
   - Modern responsive design
 
 ## Installation
-
+ husk venv på backend kun - jeg har kørt det som ikke administrativ terminal i powershell uden om cursor - havde version problemner men det virket efter jeg installeret cadquery og 3.11 py
 1. Clone the repository:
 ```bash
 git clone [repository-url]
@@ -93,8 +93,9 @@ cd stepfileanalyzer
 2. Set up the backend:
 ```bash
 cd backend
-python -m venv venv
+python -m venv venv (py -3.11 -m venv backend/venv) <----- brug 3.11 og installere cadquery manuelt før start>
 source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install cadquery
 pip install -r requirements.txt
 ```
 
