@@ -181,6 +181,9 @@ def load_material_params():
 # Load saved parameters on startup
 load_material_params()
 
+# Add this near the top where other globals are defined
+ANALYSIS_HISTORY = {}
+
 def calculate_raw_stock(bounding_box, material):
     """Calculate raw stock dimensions and volume."""
     margin = 5.0  # Fixed 5mm margin
@@ -635,21 +638,82 @@ async def calibrate_timing(
 
 @app.get("/history")
 async def get_analysis_history(material: str):
-    """Get history of analyzed parts with calibration data."""
+    """Get history of all analyzed parts, including both calibrated and non-calibrated parts."""
     if material not in MATERIAL_PARAMS:
         raise HTTPException(status_code=400, detail=f"Unsupported material: {material}")
         
     try:
-        # Get calibration data
+        # Get calibration data (these are the calibrated parts)
         calibration_data = MATERIAL_PARAMS[material].get("calibration_data", {})
         
-        # Convert dictionary to list and sort by timestamp
-        history = list(calibration_data.values())
+        # Combine calibrated and non-calibrated parts
+        history = []
+        
+        # Add calibrated parts
+        for filename, data in calibration_data.items():
+            entry = data.copy()
+            entry["filename"] = filename
+            entry["is_calibrated"] = True
+            entry["calibration_timestamp"] = entry.get("timestamp")
+            
+            # Calculate batch estimates for calibrated parts
+            total_time = entry["setup_time"] + entry["programming_time"] + entry["machining_time"]
+            batch_estimates = {}
+            batch_quantities = [1, 5, 10, 20, 50]
+            
+            for quantity in batch_quantities:
+                # Setup time is constant per batch
+                batch_setup = entry["setup_time"]
+                
+                # Programming time is constant per batch
+                batch_programming = entry["programming_time"]
+                
+                # Machining time improves with quantity due to optimizations and learning curve
+                learning_factor = 1 - (math.log(quantity, 50) * 0.15)  # Max 15% improvement at 50 pieces
+                batch_machining_per_part = entry["machining_time"] * learning_factor
+                total_machining = batch_machining_per_part * quantity
+                
+                # Calculate totals
+                batch_total_time = batch_setup + batch_programming + total_machining
+                time_per_part = batch_total_time / quantity
+                
+                batch_estimates[str(quantity)] = {
+                    "total_time": round(batch_total_time, 2),
+                    "time_per_part": round(time_per_part, 2),
+                    "setup_time": round(batch_setup, 2),
+                    "programming_time": round(batch_programming, 2),
+                    "machining_time_per_part": round(batch_machining_per_part, 2),
+                    "total_machining_time": round(total_machining, 2)
+                }
+            
+            # Add batch estimates to the entry
+            entry["machining_estimate"] = {
+                "batch_estimates": batch_estimates,
+                "total_time": total_time,
+                "setup_time_minutes": entry["setup_time"],
+                "programming_time_minutes": entry["programming_time"],
+                "machining_time_minutes": entry["machining_time"]
+            }
+            
+            history.append(entry)
+            
+        # Add analyzed but non-calibrated parts
+        if material in ANALYSIS_HISTORY:
+            for filename, data in ANALYSIS_HISTORY[material].items():
+                if filename not in calibration_data:  # Only add if not already calibrated
+                    entry = data.copy()
+                    entry["filename"] = filename
+                    entry["is_calibrated"] = False
+                    history.append(entry)
+        
+        # Sort by timestamp, newest first
         history.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
         
         return {
             "history": history,
-            "total_entries": len(history)
+            "total_entries": len(history),
+            "calibrated_count": len(calibration_data),
+            "analyzed_count": len(history) - len(calibration_data)
         }
     except Exception as e:
         logger.error(f"Error retrieving history: {str(e)}")
@@ -657,9 +721,7 @@ async def get_analysis_history(material: str):
 
 @app.post("/analyze")
 async def analyze_step_file_endpoint(file: UploadFile = File(...), material: str = Form(...)):
-    """
-    Analyze a STEP file and return its geometric properties.
-    """
+    """Analyze a STEP file and return its geometric properties."""
     try:
         # Validate material
         if material not in MATERIAL_PARAMS:
@@ -770,6 +832,24 @@ async def analyze_step_file_endpoint(file: UploadFile = File(...), material: str
                         "batch_estimates": time_estimate.get("batch_estimates", {})
                     }
                 }
+                
+                # Before returning the response, save to history
+                analysis_entry = {
+                    "filename": file.filename,
+                    "timestamp": datetime.datetime.now().isoformat(),
+                    "volume_mm3": response["basic_info"]["volume_mm3"],
+                    "complexity_score": response["machining_estimate"]["complexity_score"],
+                    "material_removal": response["material_removal"],
+                    "machining_estimate": response["machining_estimate"],
+                    "is_calibrated": False
+                }
+                
+                # Initialize material history if it doesn't exist
+                if material not in ANALYSIS_HISTORY:
+                    ANALYSIS_HISTORY[material] = {}
+                
+                # Save to history
+                ANALYSIS_HISTORY[material][file.filename] = analysis_entry
                 
                 return response
                 
@@ -1108,6 +1188,67 @@ def analyze_step_with_cadquery(file_path):
     except Exception as e:
         logger.error(f"Error analyzing STEP file with CadQuery: {str(e)}")
         raise
+
+@app.get("/materials")
+async def get_materials():
+    """Get list of all available materials and their calibration counts."""
+    try:
+        materials_info = {}
+        for material in MATERIAL_PARAMS:
+            calibration_count = len(MATERIAL_PARAMS[material].get("calibration_data", {}))
+            materials_info[material] = {
+                "name": MATERIAL_PARAMS[material]["name"],
+                "calibration_count": calibration_count,
+                "density": MATERIAL_PARAMS[material]["density"],
+                "machinability_rating": MATERIAL_PARAMS[material]["machinability_rating"]
+            }
+        return materials_info
+    except Exception as e:
+        logger.error(f"Error retrieving materials info: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving materials info: {str(e)}")
+
+@app.get("/calibrations/{material}")
+async def get_calibrations_for_material(material: str):
+    """Get all calibration data for a specific material."""
+    if material not in MATERIAL_PARAMS:
+        raise HTTPException(status_code=400, detail=f"Unsupported material: {material}")
+    
+    try:
+        calibrations = MATERIAL_PARAMS[material].get("calibration_data", {})
+        # Convert to list and sort by timestamp
+        calibration_list = []
+        for filename, data in calibrations.items():
+            entry = data.copy()
+            entry["filename"] = filename
+            calibration_list.append(entry)
+        
+        # Sort by timestamp descending (newest first)
+        calibration_list.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+        
+        return {
+            "material_name": MATERIAL_PARAMS[material]["name"],
+            "calibration_count": len(calibration_list),
+            "calibrations": calibration_list
+        }
+    except Exception as e:
+        logger.error(f"Error retrieving calibrations: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving calibrations: {str(e)}")
+
+@app.delete("/calibrations/{material}")
+async def reset_calibrations(material: str):
+    """Reset all calibration data for a specific material."""
+    if material not in MATERIAL_PARAMS:
+        raise HTTPException(status_code=400, detail=f"Unsupported material: {material}")
+    
+    try:
+        # Reset calibration data
+        MATERIAL_PARAMS[material]["calibration_data"] = {}
+        # Save to file
+        save_material_params()
+        return {"message": f"Calibration data reset for {MATERIAL_PARAMS[material]['name']}"}
+    except Exception as e:
+        logger.error(f"Error resetting calibrations: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error resetting calibrations: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
