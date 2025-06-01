@@ -331,6 +331,28 @@ function App() {
     );
   };
 
+  const handleDrop = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    
+    const droppedFiles = event.dataTransfer.files;
+    if (droppedFiles.length > 0) {
+      const droppedFile = droppedFiles[0];
+      if (droppedFile.name.toLowerCase().endsWith('.step') || droppedFile.name.toLowerCase().endsWith('.stp')) {
+        setFile(droppedFile);
+        setError(null);
+        setAnalysisResults(null);
+      } else {
+        setError('Please select a valid STEP file (.step or .stp)');
+      }
+    }
+  };
+
+  const handleDragOver = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
   return (
     <Container maxWidth="lg">
       {/* Banner Image */}
@@ -449,6 +471,8 @@ function App() {
               }
             }}
             onClick={() => fileInputRef.current.click()}
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
           >
             <input
               type="file"
