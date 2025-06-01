@@ -207,8 +207,18 @@ The complexity analysis takes into account multiple factors:
 
 ## License
 
-[Your chosen license]
+Copyright (c) 2024 Nikolai Høj Vohnsen. All Rights Reserved.
+
+This software and its associated documentation files (the "Software") are the proprietary and confidential property of Nikolai Høj Vohnsen. All rights are reserved.
+
+No part of this Software, including but not limited to the code, documentation, and user interface design, may be reproduced, distributed, modified, used, or transmitted in any form or by any means, including photocopying, recording, or other electronic or mechanical methods, without the prior written permission of Nikolai Høj Vohnsen.
+
+Unauthorized copying, use, modification, or distribution of this Software, via any medium, is strictly prohibited.
+
+For permissions and inquiries, please contact Nikolai Høj Vohnsen.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ## Contributors
 
-[Your name/organization] 
+[Nikolai Høj Vohnsen] 

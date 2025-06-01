@@ -486,6 +486,9 @@ async def analyze_step_file(file: UploadFile, material: str):
                 # Get basic measurements using CadQuery
                 results = analyze_step_with_cadquery(str(temp_file.name))
                 
+                # Get features data from results
+                features_data = results.get("features_data", {"estimated_axes": 3})
+                
                 # Count entities using CadQuery's high-level API
                 entity_counts = {
                     "face_count": len(list(shape.faces())),
@@ -749,7 +752,7 @@ async def analyze_step_file_endpoint(file: UploadFile = File(...), material: str
                 logger.info(f"Analyzing STEP file: {file.filename}")
                 results = analyze_step_with_cadquery(str(temp_file))
                 
-                # Extract features data
+                # Get features data from results
                 features_data = results.get("features_data", {"estimated_axes": 3})
                 
                 # Count entities
