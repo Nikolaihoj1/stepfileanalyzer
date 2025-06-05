@@ -110,7 +110,8 @@ npm install
 1. Start the backend server:
 ```bash
 cd backend
-uvicorn main:app --reload
+uvicorn main:app --reload (uvicorn main:app --host 0.0.0.0 --port 8000)
+netsh advfirewall firewall add rule name="FastAPI Backend 8000" dir=in action=allow protocol=TCP localport=8000
 ```
 
 2. Start the frontend development server:

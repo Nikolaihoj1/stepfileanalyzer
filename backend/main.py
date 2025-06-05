@@ -57,7 +57,11 @@ app.add_middleware(
         "http://94.145.236.170:3000",     # External IP frontend access
         "http://94.145.236.170:8000",     # External IP backend access
         "https://94.145.236.170:3000",    # HTTPS frontend
-        "https://94.145.236.170:8000"     # HTTPS backend
+        "https://94.145.236.170:8000",    # HTTPS backend
+        "http://100.76.29.87:3000",       # VPN IP frontend access
+        "http://100.76.29.87:8000",       # VPN IP backend access
+        "https://100.76.29.87:3000",      # VPN IP HTTPS frontend
+        "https://100.76.29.87:8000"       # VPN IP HTTPS backend
     ],
     allow_credentials=True,
     allow_methods=["*"],
