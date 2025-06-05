@@ -262,7 +262,14 @@ def calculate_machining_time(volume_mm3, complexity_score, material, material_re
     
     # Find similar parts
     similar_parts = []
+    exact_match = None
+    
     for part_name, calibrated_part in calibration_data.items():
+        # Check for exact volume match (same file)
+        if abs(calibrated_part["volume_mm3"] - volume_mm3) < 0.01:
+            exact_match = calibrated_part
+            break
+        
         similarity = calculate_similarity_score(current_part, calibrated_part)
         if similarity > 0.7:  # Only use parts with >70% similarity
             similar_parts.append({
@@ -273,11 +280,19 @@ def calculate_machining_time(volume_mm3, complexity_score, material, material_re
                 "machining_time": calibrated_part["machining_time"]
             })
     
-    # Sort by similarity
-    similar_parts.sort(key=lambda x: x["similarity"], reverse=True)
+    # If we have an exact match, use those times directly
+    if exact_match:
+        setup_time = exact_match["setup_time"]
+        programming_time = exact_match["programming_time"]
+        machining_time = exact_match["machining_time"]
+        confidence_score = 100  # 100% confidence for exact match
+        similar_parts = []  # Clear similar parts as we're using exact match
     
-    # Calculate base times
-    if similar_parts:
+    # If we have similar parts but no exact match
+    elif similar_parts:
+        # Sort by similarity
+        similar_parts.sort(key=lambda x: x["similarity"], reverse=True)
+        
         # Calculate weighted average times
         total_weight = sum(part["similarity"] for part in similar_parts)
         setup_time = sum(part["similarity"] * part["setup_time"] for part in similar_parts) / total_weight
@@ -287,6 +302,7 @@ def calculate_machining_time(volume_mm3, complexity_score, material, material_re
         # Calculate confidence score based on similarities
         best_similarity = similar_parts[0]["similarity"]
         confidence_score = min(100, best_similarity * 100)
+    
     else:
         # Fallback to basic calculation if no similar parts found
         base_time = params["target_machining_time"]
@@ -310,7 +326,6 @@ def calculate_machining_time(volume_mm3, complexity_score, material, material_re
         batch_programming = programming_time
         
         # Machining time improves with quantity due to optimizations and learning curve
-        # Using a learning curve factor: efficiency improves as quantity increases
         learning_factor = 1 - (math.log(quantity, 50) * 0.15)  # Max 15% improvement at 50 pieces
         batch_machining_per_part = machining_time * learning_factor
         total_machining = batch_machining_per_part * quantity
@@ -336,7 +351,8 @@ def calculate_machining_time(volume_mm3, complexity_score, material, material_re
         "confidence_score": round(confidence_score, 2),
         "calibration_points_used": len(similar_parts),
         "similar_parts": similar_parts[:3],  # Return top 3 similar parts
-        "batch_estimates": batch_estimates
+        "batch_estimates": batch_estimates,
+        "is_exact_match": exact_match is not None
     }
 
 def calculate_face_area(vertices):
